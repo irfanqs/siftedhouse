@@ -37,7 +37,7 @@ const productsToSeed = [
     price: 44000,
     description: "cold whisked ceremonial grade matcha, signature milk, less sugar.",
     category: "Drinks",
-    imageUrl: "https://i.postimg.cc/DZYKN9ML/earl-grey-bnr-removebg-preview.png"
+    imageUrl: "/earl_grey.png"
   },
   {
     name: "Additional Oat Milk",

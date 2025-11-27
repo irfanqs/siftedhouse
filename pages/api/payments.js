@@ -81,6 +81,15 @@ export default async function handler(req, res) {
     console.log('✅ Payment created in MongoDB:', paymentDoc._id);
 
     // ===== 2) Inisialisasi Midtrans Snap =====
+    console.log('🔧 Initializing Midtrans Snap...');
+    console.log('🔑 Server Key:', process.env.MIDTRANS_SERVER_KEY ? 'Available' : 'MISSING!');
+    console.log('🔑 Client Key:', process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ? 'Available' : 'MISSING!');
+    console.log('🌍 Mode:', isLiveMode() ? 'PRODUCTION' : 'SANDBOX');
+    
+    if (!process.env.MIDTRANS_SERVER_KEY) {
+      throw new Error('MIDTRANS_SERVER_KEY not configured');
+    }
+    
     const snap = new midtransClient.Snap({
       isProduction: isLiveMode(),
       serverKey: process.env.MIDTRANS_SERVER_KEY,
@@ -118,7 +127,21 @@ export default async function handler(req, res) {
     };
 
     // ===== 4) Buat transaksi di Midtrans =====
-    const transaction = await snap.createTransaction(parameter);
+    console.log('📤 Creating Midtrans transaction...', { orderId, amount });
+    
+    let transaction;
+    try {
+      transaction = await snap.createTransaction(parameter);
+      console.log('✅ Midtrans response:', transaction);
+    } catch (midtransError) {
+      console.error('❌ Midtrans API Error:', {
+        message: midtransError?.message,
+        response: midtransError?.response?.data,
+        status: midtransError?.response?.status,
+      });
+      throw new Error(`Midtrans Error: ${midtransError?.message || 'Unknown error'}`);
+    }
+    
     const snapToken = transaction.token;
     const snapUrl = transaction.redirect_url;
 
