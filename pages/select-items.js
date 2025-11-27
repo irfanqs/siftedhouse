@@ -1,17 +1,55 @@
 // pages/select-items.js
 import Link from 'next/link';
 import { useCart } from '../context/CartContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ProfileIcon from '../components/ProfileIcon';
-import LoginChooser from '../components/LoginChooser'; // tetap diimport biar aman
+import LoginChooser from '../components/LoginChooser';
 
 // HANYA 3 kategori yang ditampilkan di UI
 const categories = ['All', 'Drinks', 'Additional'];
 
-export default function SelectItemsPage({ products }) {
+export default function SelectItemsPage() {
   const { cart, addToCart, removeFromCart, getItemQuantity } = useCart();
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch products (sama seperti admin dashboard)
+  const fetchProducts = async () => {
+    console.log('🔄 [SELECT-ITEMS] Starting fetch products...');
+    setLoading(true);
+    try {
+      console.log('📡 [SELECT-ITEMS] Fetching from /api/products...');
+      const response = await fetch('/api/products');
+      console.log('📥 [SELECT-ITEMS] Response status:', response.status, response.statusText);
+      
+      const result = await response.json();
+      console.log('📦 [SELECT-ITEMS] Response data:', result);
+      console.log('✅ [SELECT-ITEMS] Products count:', result?.data?.length || 0);
+      
+      if (response.ok && result.success) {
+        setProducts(result.data || []);
+        console.log('💾 [SELECT-ITEMS] Products set to state:', result.data?.length || 0, 'items');
+      } else {
+        setProducts([]);
+        console.warn('⚠️ [SELECT-ITEMS] Response not OK or not successful');
+      }
+    } catch (error) {
+      console.error('❌ [SELECT-ITEMS] Error fetching products:', error);
+      console.error('❌ [SELECT-ITEMS] Error details:', error.message);
+      setProducts([]);
+    } finally {
+      setLoading(false);
+      console.log('✔️ [SELECT-ITEMS] Fetch completed, loading:', false);
+    }
+  };
+
+  // Fetch products on mount
+  useEffect(() => {
+    console.log('🚀 [SELECT-ITEMS] Component mounted, calling fetchProducts...');
+    fetchProducts();
+  }, []);
 
   // "All" hanya menampilkan Drinks & Additional
   const allowedForAll = ['Drinks', 'Additional'];
@@ -27,8 +65,16 @@ export default function SelectItemsPage({ products }) {
       (product?.name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+  console.log('🔍 [SELECT-ITEMS] Filter state:', {
+    totalProducts: products?.length || 0,
+    selectedCategory,
+    searchTerm,
+    filteredCount: filteredProducts?.length || 0
+  });
+
   // Langsung add ke cart tanpa login
   const handleAddToCart = (product) => {
+    console.log('➕ [SELECT-ITEMS] Adding to cart:', product.name);
     addToCart(product);
   };
 
@@ -83,8 +129,15 @@ export default function SelectItemsPage({ products }) {
           ))}
         </div>
 
-        {/* Grid Produk */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
+        {/* Loading State */}
+        {loading ? (
+          <div className="text-center py-20">
+            <div className="inline-block animate-spin rounded-full h-16 w-16 border-b-4 border-[#6A6F4C]"></div>
+            <p className="mt-4 text-[#6A6F4C] font-medium">Loading products...</p>
+          </div>
+        ) : (
+          /* Grid Produk */
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
           {filteredProducts.map((product) => {
             const quantityInCart = getItemQuantity(product._id);
             return (
@@ -149,43 +202,12 @@ export default function SelectItemsPage({ products }) {
               </div>
             );
           })}
-        </div>
+          </div>
+        )}
       </main>
 
       {/* Dummy LoginChooser (tidak muncul) */}
       <LoginChooser />
     </div>
   );
-}
-
-export async function getServerSideProps(context) {
-  try {
-    // Dynamic base URL - works in both development and production
-    const protocol = context.req.headers.host?.includes('localhost') ? 'http' : 'https';
-    const host = context.req.headers.host;
-    const baseUrl = `${protocol}://${host}`;
-    
-    console.log('Fetching products from:', `${baseUrl}/api/products`);
-    
-    const res = await fetch(`${baseUrl}/api/products`, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    if (!res.ok) {
-      console.error('Failed to fetch products:', res.status, res.statusText);
-      return { props: { products: [] } };
-    }
-    
-    const result = await res.json();
-    const products = result.success ? result.data : [];
-    
-    console.log(`✅ Fetched ${products.length} products`);
-    
-    return { props: { products } };
-  } catch (error) {
-    console.error('Error fetching products:', error.message);
-    return { props: { products: [] } };
-  }
 }
