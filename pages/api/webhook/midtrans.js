@@ -14,6 +14,13 @@ export default async function handler(req, res) {
 
     // === 1. Terima notifikasi dari Midtrans ===
     const notification = req.body;
+    
+    // Skip health check / verification requests
+    if (notification['m2m:sgn'] || !notification.order_id) {
+      console.log('[MIDTRANS WEBHOOK] Skipping non-payment request');
+      return res.status(200).json({ message: 'OK' });
+    }
+    
     console.log('[MIDTRANS WEBHOOK] received:', notification);
 
     const {
