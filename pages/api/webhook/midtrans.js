@@ -12,15 +12,7 @@ export default async function handler(req, res) {
   try {
     await connectDB();
 
-    // === 1. Terima notifikasi dari Midtrans ===
     const notification = req.body;
-    
-    // Skip health check / verification requests
-    if (notification['m2m:sgn'] || !notification.order_id) {
-      console.log('[MIDTRANS WEBHOOK] Skipping non-payment request');
-      return res.status(200).json({ message: 'OK' });
-    }
-    
     console.log('[MIDTRANS WEBHOOK] received:', notification);
 
     const {
@@ -34,11 +26,19 @@ export default async function handler(req, res) {
     } = notification;
 
     if (!order_id) {
-      return res.status(400).json({ message: 'Missing order_id' });
+      // biarin 200 supaya Midtrans gak spam retry
+      console.warn('[MIDTRANS WEBHOOK] Missing order_id');
+      return res.status(200).json({ message: 'No order_id, ignored' });
     }
 
-    // === 2. Verifikasi signature ===
-    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+    // 1) Khusus test dari dashboard (order_id default mereka)
+    if (order_id.startsWith('payment_notif_test_')) {
+      console.log('[MIDTRANS WEBHOOK] Dashboard test notification, skipping DB update');
+      return res.status(200).json({ message: 'Test OK' });
+    }
+
+    // 2) Verifikasi signature untuk transaksi beneran
+    const serverKey = process.env.MIDTRANS_SERVER_KEY || '';
     const hash = crypto
       .createHash('sha512')
       .update(`${order_id}${status_code}${gross_amount}${serverKey}`)
@@ -46,33 +46,21 @@ export default async function handler(req, res) {
 
     if (hash !== signature_key) {
       console.error('[MIDTRANS WEBHOOK] Invalid signature');
-      return res.status(401).json({ message: 'Invalid signature' });
+      // tetap 200 biar Midtrans nggak loop, tapi log keras
+      return res.status(200).json({ message: 'Invalid signature, ignored' });
     }
 
-    // === 3. Tentukan status berdasarkan transaction_status ===
+    // 3) Mapping status
     let paymentStatus = 'PENDING';
-
-    if (transaction_status === 'capture') {
-      if (fraud_status === 'accept') {
-        paymentStatus = 'PAID';
-      }
+    if (transaction_status === 'capture' && fraud_status === 'accept') {
+      paymentStatus = 'PAID';
     } else if (transaction_status === 'settlement') {
       paymentStatus = 'PAID';
-    } else if (
-      transaction_status === 'cancel' ||
-      transaction_status === 'deny' ||
-      transaction_status === 'expire'
-    ) {
+    } else if (['cancel', 'deny', 'expire'].includes(transaction_status)) {
       paymentStatus = 'FAILED';
-    } else if (transaction_status === 'pending') {
-      paymentStatus = 'PENDING';
     }
 
-    // === 4. Update status di database ===
-    const update = {
-      status: paymentStatus,
-    };
-
+    const update = { status: paymentStatus };
     if (paymentStatus === 'PAID') {
       update.paidAt = transaction_time ? new Date(transaction_time) : new Date();
     }
@@ -84,22 +72,21 @@ export default async function handler(req, res) {
     );
 
     if (!payment) {
-      console.warn('[MIDTRANS WEBHOOK] Payment not found:', order_id);
-      return res.status(404).json({ message: 'Payment not found' });
+      console.warn('[MIDTRANS WEBHOOK] Payment not found in DB:', order_id);
+      // jangan 404, cukup 200 supaya Midtrans gak retry
+      return res.status(200).json({ message: 'Payment not found, ignored' });
     }
 
-    console.log(
-      `[MIDTRANS WEBHOOK] Payment ${order_id} updated to ${paymentStatus}`
-    );
+    console.log(`[MIDTRANS WEBHOOK] Payment ${order_id} updated to ${paymentStatus}`);
 
-    // === 5. Jika status PAID, kirim WA ===
+    // 4) Kirim WA kalau PAID (logicmu boleh tetap)
     if (paymentStatus === 'PAID') {
       const WA_ENABLED = (process.env.WHATSAPP_ENABLE || '0') === '1';
       const WA_ALLOW_TEST = (process.env.WHATSAPP_ALLOW_TEST || '0') === '1';
       const isLiveMode = !serverKey.includes('SB-') && !serverKey.includes('sandbox');
       const canSendWA = isLiveMode ? WA_ENABLED : (WA_ENABLED && WA_ALLOW_TEST);
 
-      if (payment && canSendWA && payment.phone) {
+      if (canSendWA && payment.phone) {
         try {
           await sendPaidPaymentTemplate({
             phone: payment.phone,
@@ -108,21 +95,17 @@ export default async function handler(req, res) {
             amount: String(payment.amount?.toLocaleString?.('id-ID') || payment.amount),
             paid_at: new Date(update.paidAt).toLocaleString('id-ID'),
           });
-          console.log(
-            '✅ WA template PAID sent:',
-            payment.externalId,
-            `(mode: ${isLiveMode ? 'LIVE' : 'TEST'})`
-          );
+          console.log('✅ WA template PAID sent:', payment.externalId);
         } catch (err) {
           console.error('❌ WA PAID error:', err?.response?.data || err?.message || err);
         }
       }
     }
 
-    // === 6. Kirim respons sukses ke Midtrans ===
     return res.status(200).json({ message: 'Notification processed successfully' });
   } catch (error) {
     console.error('[MIDTRANS WEBHOOK] Error:', error);
-    return res.status(500).json({ message: 'Internal server error' });
+    // untuk error internal, masih aman balas 200, supaya Midtrans gak brute-force retry
+    return res.status(200).json({ message: 'Internal error, ignored' });
   }
 }
